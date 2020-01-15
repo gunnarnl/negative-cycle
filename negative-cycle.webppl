@@ -1,0 +1,115 @@
+// Powerset helper function
+var powerset = function(set){
+  if(set.length==0){
+    return [set]
+  }
+  var r = powerset(set.slice(1)) // exlude first element
+  var element = [set[0]] // first element
+  var new_r = r.concat(map(function(x){ element.concat(x) }, r))
+  return new_r
+}
+
+//var worlds = ["A","B","AB"]
+//Imagine these as portions of a beverage.
+//John may drink "1" drop of the beverage and still count as
+//not having drank the beverage.
+var worlds = [0, 1, 2, 3]
+
+// var belief_states = filter(
+//   function(x){return x.length>0},
+//   powerset(worlds)
+// )
+//Hard coding these for now:
+var belief_states = [[0], [1], [2], [3], [0, 1], [1, 2], [2, 3], [0,1,2], [1,2,3], [0,1,2,3]]
+
+var speaker_knowledgeability_states = [0, 1, 2, 3]
+
+var knowledgeability_level_prior = function() {
+  uniformDraw(speaker_knowledgeability_states)
+}
+
+var belief_state_prior = function(speaker_knowledgeability_level){
+  var weights = map(
+    function(s) {
+      Math.exp(- speaker_knowledgeability_level * s.length)
+    },
+    belief_states
+  )
+  return categorical({vs: belief_states, ps: weights})
+}
+
+var utterances = [
+  'yes',
+  'no',
+  'emph no',
+  'null'
+]
+
+// var cost_disjunction = 0.2
+// var cost_conjunction = 0.1
+
+var utterance_cost = function(utterance){
+  var utt_cost_table = {
+    'yes' : 1,
+    'no' : 1,
+    'emph no' : 1.5,
+    'null': 1
+  }
+  utt_cost_table[utterance]
+}
+
+var alpha = 5
+
+var utterance_prior = cache(function(){
+  Infer({method:'enumerate',model(){
+    var utterance = uniformDraw(utterances)
+    factor(- alpha * utterance_cost(utterance))
+    return utterance
+  }})})
+
+var utterance_meaning = function(utterance){
+  var basic_meaning = {
+    "yes" : [1, 2, 3],
+    "no" : [0, 1],
+    "emph no" : [0],
+    'null' : [0,1,2,3]
+  }
+  basic_meaning[utterance]
+}
+
+var literal_listener = cache(function(utterance, lexicon) {
+  Infer({model: function() {
+    var world = uniformDraw(utterance_meaning(utterance, lexicon))
+    return world
+  }})
+})
+
+var utility = function(belief_state, utterance){
+  var scores = map(
+    function(x) {
+      literal_listener(utterance).score(x)
+    },
+    belief_state
+  )
+  return (1/belief_state.length * sum(scores))
+}
+
+var speaker = cache(function(belief_state){
+  Infer({method:'enumerate',
+         model: function(){
+           var utterance = sample(utterance_prior())
+           factor(alpha*utility(belief_state, utterance))
+           return utterance
+         }})})
+
+var listener = cache(function(utterance){
+  Infer({method:'enumerate',
+         model (){
+           var knowledgeability = knowledgeability_level_prior(speaker_knowledgeability_states)
+           var belief_state = belief_state_prior(knowledgeability)
+           var speaker = speaker(belief_state,knowledgeability)
+           factor(speaker.score(utterance))
+           return {belief_state, knowledgeability}
+         }})})
+
+listener("yes")

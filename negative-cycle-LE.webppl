@@ -1,0 +1,153 @@
+// Powerset helper function
+var powerset = function(set){
+  if(set.length==0){
+    return [set]
+  }
+  var r = powerset(set.slice(1)) // exlude first element
+  var element = [set[0]] // first element
+  var new_r = r.concat(map(function(x){ element.concat(x) }, r))
+  return new_r
+}
+
+//Imagine these as portions of a beverage.
+//John may drink "1" drop of the beverage and still count as
+//not having drank the beverage.
+var worlds = [0, 1, 2, 3]
+
+//Hard coding these for now:
+var belief_states = [[0], [1], [2], [3], [0, 1], [1, 2], [2, 3], [0,1,2], [1,2,3], [0,1,2,3]]
+
+var speaker_knowledgeability_states = [0, 1, 2, 3]
+
+var knowledgeability_level_prior = function() {
+  uniformDraw(speaker_knowledgeability_states)
+}
+
+var belief_state_prior = function(speaker_knowledgeability_level){
+  var weights = map(
+    function(s) {
+      Math.exp(- speaker_knowledgeability_level * s.length)
+    },
+    belief_states
+  )
+  return categorical({vs: belief_states, ps: weights})
+}
+
+var utterances = [
+  'yes',
+  'no',
+  'emph no',
+  'null'
+]
+
+var lexica = [{"emph no": "min", "no": "some"},
+             {"emph no": "some", "no": "some"},
+             {"emph no": "min", "no": "min"}]
+
+var lexicon_prior = function() {
+  uniformDraw(lexica)
+}
+
+var utterance_meaning = function(utterance, lexicon){
+  var basic_meaning = {
+    "yes" : [1, 2, 3],
+    "no" : lexicon["no"]=="min" ? [0] : [0, 1],
+    "emph no" : lexicon["emph no"]=="min" ? [0] : [0, 1],
+    'null' : [0,1,2,3]
+  }
+  basic_meaning[utterance]
+}
+
+var costs = {
+  1: {'yes': 1, 'no': 1, 'emph no': 2, 'null': 100},
+  2: {'yes': 1, 'no': 1, 'emph no': 1.5, 'null': 100},
+  3: {'yes': 1, 'no': 1, 'emph no': 1, 'null': 100},
+  4: {'yes': 1, 'no': 1.5, 'emph no': 1, 'null': 100},
+  5: {'yes': 1, 'no': 2, 'emph no': 1, 'null': 100}
+}
+
+var utterance_cost = function(utterance, stage){
+  var utt_cost_table = costs[stage]
+  utt_cost_table[utterance]
+}
+
+var alpha = 5
+
+var utterance_prior = cache(function(costs){
+  Infer({method:'enumerate',model(){
+    var utterance = uniformDraw(utterances)
+    factor(- alpha * utterance_cost(utterance, costs))
+    return utterance
+  }})})
+
+
+var literal_listener = cache(function(utterance, lexicon) {
+  Infer({model: function() {
+    var world = uniformDraw(utterance_meaning(utterance, lexicon))
+    return world
+  }})
+})
+
+var utility = function(belief_state, utterance, lexicon){
+  var scores = map(
+    function(x) {
+      literal_listener(utterance, lexicon).score(x)
+    },
+    belief_state
+  )
+  return (1/belief_state.length * sum(scores))
+}
+
+var speaker = cache(function(belief_state, lexicon, stage){
+  Infer({method:'enumerate',
+         model: function(){
+           var utterance = sample(utterance_prior(stage))
+           //var listener = literal_listener(utterance, lexicon)
+           factor(alpha*utility(belief_state, utterance, lexicon))
+           return utterance
+         }})})
+
+var listener = cache(function(utterance, stage){
+  Infer({method:'enumerate',
+         model (){
+           var knowledgeability = knowledgeability_level_prior(speaker_knowledgeability_states)
+           var lexicon = lexicon_prior()
+           var belief_state = belief_state_prior(knowledgeability)
+           var speaker = speaker(belief_state, lexicon, stage)
+           factor(speaker.score(utterance))
+           return {belief_state, knowledgeability}
+         }})})
+
+var pSpeaker = cache(function(belief_state, stage){
+  Infer({method: 'enumerate',
+        model(){
+          var utterance = sample(utterance_prior(stage))
+          factor(marginalize(listener(utterance, stage), "belief_state").score(belief_state))
+          return utterance
+        }})
+})
+
+var stages = [1, 2, 3, 4, 5]
+var S2_test_states = [[0], [1], [0, 1]]
+
+var conditions = map(function(x){
+  map(function(y){
+      return {state: x, stage: y}
+      }, stages)
+}, S2_test_states)
+
+var conditionsMerged = [].concat.apply([], conditions)
+
+
+var S2predictions = map(function(stim){
+  var S2posterior = pSpeaker(stim.state, stim.stage)
+  return {
+    x: stim.state,
+    y: Math.exp(S2posterior.score("emph no")),
+    sub: stim.stage,
+    model: "S2"
+  }
+}, conditionsMerged)
+
+display("probability for various stages associated with state")
+viz.bar(S2predictions, {groupBy: 'sub'})
