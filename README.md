@@ -6,6 +6,6 @@ Diachronic change, i.e. Jespersen's cycle of negation, is modeled as changing co
 
 # model and results
 
-Implemented in (WebPPL)[webppl.org].
+Implemented in [WebPPL](webppl.org).
 
 Results are exported as json objects for each utterance and processed in R using ggplot2.
